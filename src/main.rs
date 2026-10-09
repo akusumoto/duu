@@ -24,6 +24,10 @@ struct Cli {
     #[arg(short = 'd', long = "depth", default_value_t = 1)]
     depth: usize,
 
+    /// Hide entries smaller than SIZE (e.g. 512, 10K, 1.5M, 2G); totals still include them
+    #[arg(short = 't', long = "threshold", value_name = "SIZE", value_parser = parse_size, default_value = "0")]
+    threshold: u64,
+
     /// Human-readable sizes (default)
     #[arg(short = 'h')]
     human: bool,
@@ -122,6 +126,27 @@ fn scan(path: &Path) -> Entry {
     }
 }
 
+/// Parses a size like `512`, `10K`, `1.5M` or `2GB` (1024-based) into bytes.
+fn parse_size(s: &str) -> Result<u64, String> {
+    let t = s.trim();
+    let t = t.strip_suffix(['B', 'b']).unwrap_or(t);
+    let (num, mult) = match t.chars().last().map(|c| c.to_ascii_uppercase()) {
+        Some('K') => (&t[..t.len() - 1], 1u64 << 10),
+        Some('M') => (&t[..t.len() - 1], 1u64 << 20),
+        Some('G') => (&t[..t.len() - 1], 1u64 << 30),
+        Some('T') => (&t[..t.len() - 1], 1u64 << 40),
+        _ => (t, 1),
+    };
+    let value: f64 = num
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid size '{s}' (expected e.g. 512, 10K, 1.5M, 2G)"))?;
+    if !value.is_finite() || value < 0.0 {
+        return Err(format!("invalid size '{s}'"));
+    }
+    Ok((value * mult as f64).ceil() as u64)
+}
+
 fn human_readable(bytes: u64) -> String {
     const UNITS: [&str; 6] = ["B", "K", "M", "G", "T", "P"];
     let mut size = bytes as f64;
@@ -165,6 +190,7 @@ fn collect_lines(
     entry: &Entry,
     unit: Unit,
     max_depth: usize,
+    threshold: u64,
     level: usize,
     indent: &str,
     lines: &mut Vec<Line>,
@@ -172,26 +198,43 @@ fn collect_lines(
     if level > max_depth {
         return;
     }
-    let count = entry.children.len();
-    for (i, child) in entry.children.iter().enumerate() {
+    // Children are sorted largest first, so the visible ones form a prefix
+    let count = entry
+        .children
+        .iter()
+        .take_while(|c| c.size >= threshold)
+        .count();
+    for (i, child) in entry.children.iter().take(count).enumerate() {
         let is_last = i + 1 == count;
-        let (branch, next) = if is_last { ("└─ ", "   ") } else { ("├─ ", "│  ") };
+        let (branch, next) = if is_last {
+            ("└─ ", "   ")
+        } else {
+            ("├─ ", "│  ")
+        };
         lines.push(Line {
             prefix: format!("{indent}{branch}"),
             size: format_size(child.size, unit),
             name: display_name(child),
         });
-        collect_lines(child, unit, max_depth, level + 1, &format!("{indent}{next}"), lines);
+        collect_lines(
+            child,
+            unit,
+            max_depth,
+            threshold,
+            level + 1,
+            &format!("{indent}{next}"),
+            lines,
+        );
     }
 }
 
-fn print_tree(root: &Entry, unit: Unit, max_depth: usize) {
+fn print_tree(root: &Entry, unit: Unit, max_depth: usize, threshold: u64) {
     let mut lines = vec![Line {
         prefix: String::new(),
         size: format_size(root.size, unit),
         name: display_name(root),
     }];
-    collect_lines(root, unit, max_depth, 1, "", &mut lines);
+    collect_lines(root, unit, max_depth, threshold, 1, "", &mut lines);
 
     let width = lines.iter().map(|l| l.size.len()).max().unwrap_or(0);
     for line in &lines {
@@ -230,7 +273,7 @@ fn main() -> ExitCode {
 
     let mut root = scan(&path);
     root.name = root_label;
-    print_tree(&root, unit, cli.depth.max(1));
+    print_tree(&root, unit, cli.depth.max(1), cli.threshold);
 
     ExitCode::SUCCESS
 }

@@ -39,6 +39,7 @@ duu [OPTIONS] [PATH]
 | Option | Description |
 | --- | --- |
 | `-d`, `--depth <N>` | Depth to display; `1` shows direct children only (default: `1`) |
+| `-t`, `--threshold <SIZE>` | Hide entries smaller than `SIZE` (default: `0`, show all) |
 | `-h` | Human-readable sizes, e.g. `5.6K`, `62.5M` (default) |
 | `-k` | Sizes in KB |
 | `-m` | Sizes in MB |
@@ -58,6 +59,14 @@ $ duu -d 2 src
 5.6K src/
 └─ 5.6K main.rs
 ```
+
+Show only entries of at least 1 MB (smaller ones are hidden but still counted in their parent's total):
+
+```sh
+duu -t 1M
+```
+
+`SIZE` is a number of bytes with an optional `K`, `M`, `G` or `T` suffix (1024-based, case-insensitive, optional trailing `B`); decimals such as `1.5G` are allowed.
 
 Show sizes in megabytes:
 
